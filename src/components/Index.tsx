@@ -8,6 +8,7 @@ import Mail from "./mailcard";
 import Footer from "./footer";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { API_ENDPOINTS } from "../api/apiConfig";
 
 /** Extend HTMLElement to support custom timeout property */
 interface MouseTrackDiv extends HTMLDivElement {
@@ -21,24 +22,97 @@ declare global {
   }
 }
 
+interface ProfileData {
+  userId: number;
+  name: string;
+  email: string;
+  phone: string;
+  gender: string;
+  dateOfBirth: string;
+  designation: string;
+  companyName: string;
+  profileImage: string;
+  createdOn: string;
+  updatedOn: string;
+}
+
 const Index = () => {
   const [showTick, setShowTick] = useState(false);
   const [showContent, setShowContent] = useState(false);
   const [imagesLoaded, setImagesLoaded] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [showFeedbackButton, setShowFeedbackButton] = useState(false);
+  const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [profileError, setProfileError] = useState("");
 
   // ✅ FIX: profile dropdown state
   const [profileOpen, setProfileOpen] = useState<boolean>(false);
 
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
 
   const heroRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
 
   // typed ref for mouse tracking
   const textContainerRef = useRef<MouseTrackDiv>(null);
+
+  // Fetch profile data
+  const fetchProfile = async () => {
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      console.log("Fetching profile for Index...");
+      
+      const response = await fetch(API_ENDPOINTS.PROFILES, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      console.log("Profile response status:", response.status);
+      
+      if (!response.ok) {
+        if (response.status === 404) {
+          setProfile(null);
+          setProfileError("");
+        } else {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+      } else {
+        const data = await response.json();
+        console.log("Profile data received:", data);
+        
+        if (data.profile) {
+          setProfile(data.profile);
+          setProfileError("");
+        } else {
+          setProfile(null);
+        }
+      }
+    } catch (err: any) {
+      console.error("Profile fetch error:", err);
+      setProfileError("Failed to load profile");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch profile when component mounts and token changes
+  useEffect(() => {
+    if (token) {
+      fetchProfile();
+    } else {
+      setLoading(false);
+    }
+  }, [token]);
 
   // Show feedback button when user is logged in
   useEffect(() => {
@@ -153,6 +227,40 @@ const Index = () => {
     navigate("/feedback");
   };
 
+  // Get user initials for fallback avatar
+  const getUserInitials = () => {
+    if (!user?.name) return "U";
+    return user.name
+      .split(" ")
+      .map(part => part[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  // Get profile image URL or fallback
+  const getProfileImage = () => {
+    if (profile?.profileImage) {
+      // Check if it's a base64 data URL or regular URL
+      if (profile.profileImage.startsWith('data:')) {
+        return profile.profileImage;
+      } else if (profile.profileImage.startsWith('http')) {
+        return profile.profileImage;
+      } else {
+        // Assuming it's a relative path
+        return `${window.location.origin}${profile.profileImage}`;
+      }
+    }
+    return null;
+  };
+
+  // Handle logout with profile cleanup
+  const handleLogout = () => {
+    logout();
+    setProfile(null);
+    navigate("/login");
+  };
+
   return (
     <>
       <div className="page-container">
@@ -204,6 +312,7 @@ const Index = () => {
                       cursor: 'pointer',
                       transition: 'all 0.3s ease',
                       background: profileOpen ? '#F3F4F6' : 'transparent',
+                      position: 'relative',
                     }}
                     onMouseEnter={(e) => {
                       if (!profileOpen) e.currentTarget.style.background = '#F9FAFB';
@@ -218,7 +327,9 @@ const Index = () => {
                         width: '40px',
                         height: '40px',
                         borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #3B82F6 0%, #8B5CF6 100%)',
+                        background: getProfileImage() 
+                          ? 'transparent'
+                          : 'linear-gradient(135deg, #3B82F6 0%, #8B5CF6 100%)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -228,9 +339,29 @@ const Index = () => {
                         boxShadow: '0 2px 8px rgba(59, 130, 246, 0.3)',
                         transition: 'transform 0.2s',
                         transform: profileOpen ? 'scale(1.05)' : 'scale(1)',
+                        overflow: 'hidden',
+                        border: getProfileImage() ? '2px solid #3B82F6' : 'none',
                       }}
                     >
-                      {user.name?.charAt(0).toUpperCase()}
+                      {getProfileImage() ? (
+                        <img 
+                          src={getProfileImage()!}
+                          alt="Profile"
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'cover',
+                          }}
+                          onError={(e) => {
+                            // If image fails to load, show initials
+                            e.currentTarget.style.display = 'none';
+                            e.currentTarget.parentElement!.innerText = getUserInitials();
+                            e.currentTarget.parentElement!.style.background = 'linear-gradient(135deg, #3B82F6 0%, #8B5CF6 100%)';
+                          }}
+                        />
+                      ) : (
+                        getUserInitials()
+                      )}
                     </div>
                     
                     <span 
@@ -245,7 +376,7 @@ const Index = () => {
                         whiteSpace: 'nowrap',
                       }}
                     >
-                      {user.name}
+                      {profile?.name || user.name || 'User'}
                     </span>
 
                     {/* Dropdown Arrow */}
@@ -291,20 +422,64 @@ const Index = () => {
                         padding: '12px',
                         borderBottom: '1px solid #F3F4F6',
                         marginBottom: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
                       }}>
                         <div style={{
-                          fontWeight: '600',
-                          color: '#111827',
-                          fontSize: '14px',
-                          marginBottom: '4px',
+                          width: '48px',
+                          height: '48px',
+                          borderRadius: '50%',
+                          background: getProfileImage() 
+                            ? 'transparent'
+                            : 'linear-gradient(135deg, #3B82F6 0%, #8B5CF6 100%)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: 'white',
+                          fontWeight: '700',
+                          fontSize: '18px',
+                          overflow: 'hidden',
+                          border: getProfileImage() ? '2px solid #3B82F6' : 'none',
                         }}>
-                          {user.name}
+                          {getProfileImage() ? (
+                            <img 
+                              src={getProfileImage()!}
+                              alt="Profile"
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover',
+                              }}
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                                e.currentTarget.parentElement!.innerText = getUserInitials();
+                                e.currentTarget.parentElement!.style.background = 'linear-gradient(135deg, #3B82F6 0%, #8B5CF6 100%)';
+                              }}
+                            />
+                          ) : (
+                            getUserInitials()
+                          )}
                         </div>
-                        <div style={{
-                          fontSize: '12px',
-                          color: '#6B7280',
-                        }}>
-                          {user.email || 'user@example.com'}
+                        <div>
+                          <div style={{
+                            fontWeight: '600',
+                            color: '#111827',
+                            fontSize: '14px',
+                            marginBottom: '4px',
+                          }}>
+                            {profile?.name || user.name || 'User'}
+                          </div>
+                          <div style={{
+                            fontSize: '12px',
+                            color: '#6B7280',
+                            maxWidth: '150px',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {profile?.email || user.email || 'user@example.com'}
+                          </div>
                         </div>
                       </div>
 
@@ -358,10 +533,7 @@ const Index = () => {
                       {/* Logout */}
                       <div
                         className="dropdown-item logout"
-                        onClick={() => {
-                          logout();
-                          navigate("/login");
-                        }}
+                        onClick={handleLogout}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -576,8 +748,8 @@ const Index = () => {
 
             {/* Center Card */}
             <div className="center-card" style={{
-              width: "22%",
-              height: "35%",
+              width: "20%",
+              height: "32%",
             }}>
               <img 
                 src="https://assets-v2.lottiefiles.com/a/b3497a14-1150-11ee-8f36-0f83069a3c82/CFKyrs2JTS.gif"
